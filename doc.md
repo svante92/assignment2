@@ -10,7 +10,9 @@ We investigate whether incorporating historical playtime improves personalized g
 
 **Research question:** Does playtime-weighted Bayesian Personalized Ranking (BPR) outperform standard BPR on top-K game recommendation?
 
-**Hypothesis:** Playtime provides a useful preference signal, but heavy-tailed playtime and differences in user activity may make normalization important. Negative results are acceptable and will be analyzed.
+**Hypothesis.** Longer playtime may strengthen the ownership signal. The heavy-tailed playtime distribution and differences in user activity motivated the logarithmic transform and per-user normalization.
+
+**Finding.** Standard BPR led all five models on the full test split, with NDCG@10 of 0.2790. The validation sweep selected equal weights ($\alpha=0$). Both playtime-weighted variants recovered a higher share of held-out games users had played, and a lower share of held-out games with zero recorded playtime.
 
 ## 2. Dataset and preprocessing
 
@@ -19,13 +21,12 @@ We investigate whether incorporating historical playtime improves personalized g
 - Flatten nested item lists, remove duplicate user-game pairs (keeping the larger playtime), validate nonnegative playtime, and retain zero-playtime ownership interactions.
 - Remove entries that are not standalone games (test/beta builds Steam grants alongside a game, dedicated servers, SDKs and editors, soundtracks, demos) by name only, with an explicit exceptions list for real games whose names match. This removed 76 entries (3.1% of interactions), including *Dota 2 Test*, the most-owned entry in the raw data.
 - Iteratively filter users with fewer than 10 games and games with fewer than 5 users. Report counts before and after filtering. Result: 56,457 users, 9,130 games, 4,876,826 interactions.
-- Use a seeded per-user random 80/10/10 train/validation/test split, ensuring at least one interaction in each partition. Only train-supported items are eligible for evaluation; report excluded held-out interactions and users.
-- Fit all model statistics and playtime transformations using training data only. Use validation for hyperparameter selection; keep test data untouched until final evaluation.
-- If full-data training is too expensive, use a fixed seeded user subset, report the sampling procedure, and use identical splits for every model.
+- The seeded per-user split produced 3,896,608 training interactions, 490,109 validation interactions, and 490,109 test interactions. All 56,457 users were eligible for validation and test. Every held-out game appeared in training.
+- Fit model statistics and playtime transformations on training data. Use validation for hyperparameter and checkpoint selection. Use the full shared split for the reported experiments.
 
 ### Exploratory data analysis
 
-Report user/item/interaction counts, sparsity, zero-playtime fraction, playtime quantiles, and plots of games per user, users per game, and raw/log-transformed playtime. Explain that ownership is imperfect implicit feedback and that the dataset is a snapshot rather than a chronological purchase history.
+Section 2.4 of the notebook reports dataset counts, sparsity, zero-playtime share, playtime quantiles, and plots of library size, game popularity, and raw and log-transformed playtime. The dataset is a snapshot of ownership and recorded playtime, so ownership serves as a proxy for preference.
 
 ## 3. Models
 
@@ -41,38 +42,38 @@ For games $i$ and $j$, let $U_i$ and $U_j$ be their training users:
 
 $$J(i,j)=\frac{|U_i\cap U_j|}{|U_i\cup U_j|}.$$
 
-Score an unseen candidate by summing its similarities to games in the user's training history. Compute similarities blockwise with sparse matrices. The number of neighbors kept per item was chosen on validation NDCG@10 from {25, 100, 400, all}; keeping all neighbors was best (NDCG@10 0.237 vs 0.203 for top 100) and fits in memory as a dense 9,130 × 9,130 matrix (~330 MB). Top-k ties are broken by lower item ID.
+Score an unseen candidate by summing its similarities to games in the user's training history. Compute similarities blockwise with sparse matrices. The full validation sweep tested 25, 100, 400, and all neighbors per item. All neighbors gave the highest validation NDCG@10 (0.2335) and fit in memory as a dense 9,130 × 9,130 matrix (about 330 MB). Break score ties by lower item ID. [Jaccard validation results](results/jaccard_validation_sweep.csv)
 
 ### 3.3 Standard BPR
 
 Learn user and item embeddings, with score $s(u,i)=p_u^Tq_i$.
 
-Sample triplets $(u,i,j)$ where $i$ is a training-owned game and $j$ is not in the user's training history. Unobserved games are treated as sampled negatives, not verified dislikes. Do not use validation/test ownership to construct training negatives.
+Shuffle the eligible training interactions each epoch. For each training-owned game $i$ of user $u$, sample one game $j$ uniformly from the train-supported catalog outside that user's training history. The sampled negative represents missing ownership in the training data.
 
-$$\mathcal L=\mathbb E[-\log\sigma(s(u,i)-s(u,j))]+\lambda\|\Theta\|_2^2.$$
+$$\ell_{uij}=\operatorname{softplus}(s(u,j)-s(u,i)),\qquad R_{uij}=\|p_u\|_2^2+\|q_i\|_2^2+\|q_j\|_2^2.$$
+
+Standard BPR minimizes the mean triplet loss $\mathcal L=\mathbb E[\ell_{uij}+\lambda R_{uij}]$.
 
 ### 3.4 Playtime-weighted BPR (proposed)
 
-$$\mathcal L=\mathbb E[-w_{ui}\log\sigma(s(u,i)-s(u,j))]+\lambda\|\Theta\|_2^2.$$
+$$\mathcal L=\mathbb E[w_{ui}\ell_{uij}+\lambda R_{uij}].$$
 
 Let $t_{ui}$ denote training playtime in hours and $a_{ui}=(1+\log(1+t_{ui}))^\alpha$.
 
 | Variant | Raw weight |
 |---|---|
 | Standard BPR | 1 |
-| Log-weighted BPR | $a_{ui}$, with $\alpha=1$ initially |
+| Log-weighted BPR | $a_{ui}$, with $\alpha=1$ in the main comparison |
 | User-normalized BPR | $a_{ui}/\operatorname{mean}_{k\in I_u^{train}}a_{uk}$ |
 
-Normalize weights to have mean 1 under the training triplet sampling distribution (use uniform training-interaction sampling). The same architecture, sampler, optimizer, embedding size, and regularization should be used across BPR variants for the controlled comparison. Use a numerically stable `softplus(s_neg - s_pos)` loss.
+Normalize weights to have mean one across interactions eligible for triplet sampling. All BPR variants share the architecture, sampler, optimizer, embedding dimension, and regularization.
 
 ## 4. Training and evaluation protocol
 
-- Suggested starting configuration: 64-dimensional embeddings, Adam, learning rate 0.001, batch size 4096, up to 30 epochs, early stopping on validation NDCG@10. Tune a small shared configuration if needed. Per-epoch checkpoint selection computes NDCG@10 on all validation users, with the same masking and tie-breaking as the shared evaluator.
-- Sample one or more negatives per positive using the same policy for every BPR variant.
-- Rank all train-supported games in batches. For validation, mask training games; for test, mask training and validation games. Do not retrain on validation unless the protocol is explicitly changed for all models.
-- Compute macro-averaged Recall@10, Recall@20, NDCG@10, and AUC over eligible users. Treat held-out ownership as relevance; unobserved candidates are not confirmed negatives.
-- Use deterministic tie handling, fixed seeds, and identical candidate sets across models. If full-catalog evaluation is infeasible, use the same fixed sampled candidates for every model and disclose that metrics are sampled.
-- Use validation NDCG@10 as the primary model-selection metric. If compute permits, repeat BPR experiments with three seeds and report mean and standard deviation.
+- BPR uses 64-dimensional embeddings, Adam with learning rate 0.001, batch size 4,096, sampled L2 regularization of 0.0001, and seed 42.
+- Train for up to 100 epochs. Stop after five consecutive epochs without a new best validation NDCG@10 and restore the best checkpoint. Evaluate NDCG@10 on all validation users each epoch. The selected checkpoints were epochs 91, 73, and 59 for standard, log-weighted, and user-normalized BPR, respectively. [Checkpoint comparison](results/bpr_extended_validation.csv)
+- Rank the full train-supported catalog in batches. Mask training games on validation. Mask both training and validation games on test. Use the same candidates and deterministic tie-breaking for all models.
+- Report macro-averaged Recall@10, Recall@20, NDCG@10, and AUC over eligible users. Held-out ownership defines relevance. The reported estimates are from one seed.
 
 ## 5. Experiments
 
@@ -80,21 +81,25 @@ Normalize weights to have mean 1 under the training triplet sampling distributio
 
 | Model | Recall@10 | Recall@20 | NDCG@10 | AUC |
 |---|---|---|---|---|
-| Popularity | TBD | TBD | TBD | TBD |
-| Jaccard | TBD | TBD | TBD | TBD |
-| Standard BPR | TBD | TBD | TBD | TBD |
-| Log-weighted BPR | TBD | TBD | TBD | TBD |
-| User-normalized BPR | TBD | TBD | TBD | TBD |
+| Popularity | 0.1480 | 0.2110 | 0.1577 | 0.9500 |
+| Jaccard | 0.2422 | 0.3102 | 0.2702 | 0.9611 |
+| Standard BPR | **0.2603** | **0.3567** | **0.2790** | **0.9772** |
+| Log-weighted BPR | 0.2435 | 0.3382 | 0.2586 | 0.9769 |
+| User-normalized BPR | 0.2370 | 0.3305 | 0.2524 | 0.9766 |
+
+The test comparison covers all 56,457 users and uses the validation-selected checkpoints from the extended BPR runs. [Full test results](results/main_comparison.csv)
 
 ### Experiment B — Playtime sensitivity
 
-Evaluate $\alpha\in\{0,0.25,0.5,1,2\}$ on validation data for the log-weighted variant; $\alpha=0$ is standard BPR. Plot validation NDCG@10 versus $\alpha$. Select the best value using validation only and report its final test result separately if it differs from the fixed log-weighted model. Reduce to $\{0,0.5,1,2\}$ if compute is limited.
+Across $\alpha\in\{0,0.25,0.5,1,2\}$, validation NDCG@10 declined from 0.2364 to 0.2023. The best positive exponent was 0.25, at 0.2329. Validation selected $\alpha=0$, so the selected checkpoint is already represented by standard BPR in the test table. [Sweep results](results/bpr_alpha_sweep.csv) · [Sweep plot](figures/bpr_alpha_sweep.png)
 
 ### Experiment C — User activity analysis
 
-Divide users by total training playtime into bottom 25%, middle 50%, and top 25%. Compare standard BPR and playtime-weighted models on each group; report group sizes. Discuss whether observed differences might be explained by library size or popularity bias rather than playtime alone.
+Standard BPR led both weighted variants in the bottom quarter, middle half, and top quarter of total training playtime. The log-weighted model's NDCG@10 gap narrowed from 0.0250 in the bottom quarter to 0.0159 in the top quarter. When grouping by training library size, the gap narrowed from 0.0216 to 0.0191. The groupings agree for 57% of users. The comparison is descriptive because playtime and library size are correlated. [Activity breakdown](results/bpr_user_activity_test.csv)
 
-Optional, only after core experiments: catalog coverage, popularity bias, or paired bootstrap confidence intervals.
+### Played and never-played held-out games
+
+Of the held-out test interactions, 34.6% had zero recorded playtime. At rank 20, log-weighted BPR recovered 29.7% of the played games and 16.3% of the never-played games. Standard BPR recovered 28.1% and 23.7%, respectively. These rates pool held-out interactions within the two playtime groups. [Hit rates by recorded playtime](results/heldout_hits_by_playtime.csv)
 
 ## 6. Division of work
 
@@ -143,20 +148,17 @@ The final `workbook.ipynb` follows the graded sections: (1) predictive task, (2)
 
 Recommended stack: Python, NumPy, Pandas, SciPy, PyTorch, Matplotlib, PyArrow, Jupyter. Pin dependencies after verifying the environment.
 
-## 8. One-week schedule
+## 8. Submission milestones
 
-| Date | Tony | Svante | Milestone |
-|---|---|---|---|
-| Nov 23 | Agree on model interface | Download data, agree on split schema | Finalize plan |
-| Nov 24 | Implement BPR and sampler | Preprocess, EDA, popularity | Data and initial baseline |
-| Nov 25 | Train standard BPR | Jaccard and shared evaluation | End-to-end pipeline |
-| Nov 26 | Weighted BPR experiments | Verify metrics and baseline results | Main comparison |
-| Nov 27 | Alpha ablation | User activity analysis | Freeze core results |
-| Nov 28 | Modeling and evaluation write-up | EDA, dataset and related work write-up | Integrated notebook/slides |
-| Nov 29 | Present modeling/results | Present task/data/baselines | Record and validate submission |
-| Nov 30 | Joint final checks | Joint final checks | Buffer; submit by official deadline |
+As of November 24, the modeling, evaluation, and write-up are in the shared notebook. Tony's modeling presentation segment is ready to incorporate into the team deck. [Tony's slide copy and speaker notes](tony_presentation.md)
 
-If behind schedule, prioritize the three baselines, log-weighted BPR, and a correct evaluation pipeline; reduce the alpha sweep before sacrificing notebook or presentation quality.
+| Target | Remaining work |
+|---|---|
+| Nov 28 | Finish slide prep and review the notebook together. Tighten Section 4.5 to describe recorded playtime on held-out games. |
+| Nov 29 | Run and verify the notebook export. Record the two presentation blocks and combine them into one video. |
+| Nov 30 | Verify both submission files and submit by the deadline posted on Gradescope. |
+
+These are team planning dates. Check Gradescope for the official assignment and peer grading deadlines.
 
 ## 9. Related work
 
@@ -164,29 +166,32 @@ If behind schedule, prioritize the three baselines, log-weighted BPR, and a corr
 - Hu, Koren, and Volinsky (2008), *Collaborative Filtering for Implicit Feedback Datasets*, ICDM.
 - Pathak, Gupta, and McAuley (2017), *Generating and Personalizing Bundle Recommendations on Steam*, SIGIR. See the dataset page for the paper and dataset provenance.
 
-Compare our method and findings with these works; do not claim that playtime weighting is a novel research contribution without a broader literature review.
+Section 5 compares the results with prior work on ranking, confidence weighting, and Steam behavior. [Notebook](workbook.ipynb)
 
 ## 10. Final deliverables and checklist
 
-- [ ] Reproducible data preprocessing and shared split
-- [ ] EDA plots and dataset statistics
-- [ ] Popularity, Jaccard, and standard BPR
-- [ ] Playtime-weighted and user-normalized BPR
-- [ ] Main comparison, alpha ablation, and user activity analysis
-- [ ] Discussion of limitations and related work
-- [ ] Clean, executed `workbook.ipynb` exported as `workbook.html`
-- [ ] Approximately 20-minute presentation (both members participate)
-- [ ] `video_url.txt` containing an accessible video link; verify submission requirements
+- [x] Reproducible data preprocessing and shared split
+- [x] EDA plots and dataset statistics
+- [x] Popularity, Jaccard, standard BPR, and both playtime-weighted variants
+- [x] Extended training, test comparison, alpha sweep, and subgroup analysis
+- [x] Modeling overview, related work, and limitations
+- [x] Tony's five-minute slide copy and speaker notes
+- [ ] Review Section 4.5 wording and remove team notes from the notebook
+- [ ] Run `workbook.ipynb` end to end, export `workbook.html`, and verify it in a browser
+- [ ] Finish the team deck, record separate presentation blocks, and combine them into one roughly 20-minute video
+- [ ] Verify the shareable video link, put it in `video_url.txt`, and submit both files on Gradescope
 - [ ] Submit peer grading report by its separate deadline
 
 ### Suggested presentation allocation
 
+Svante records the opening 10 minutes. Tony records the closing 10 minutes. Combine the two recordings in that order for submission.
+
 | Section | Presenter | Minutes |
 |---|---|---:|
-| Predictive task | Svante | 2 |
+| Predictive task and evaluation protocol | Svante | 2 |
 | Dataset and EDA | Svante | 4 |
-| Models and objectives | Tony | 5 |
-| Evaluation and results | Both | 6 |
-| Related work and limitations | Both | 3 |
+| Popularity and Jaccard baselines, plus related work | Svante | 4 |
+| BPR models, objectives, and training | Tony | 5 |
+| Test results, playtime findings, and limitations | Tony | 5 |
 
 The grading rubric allocates 5 points to each of the five content sections and 4 points to peer grading. Prioritize a clear, correct and reproducible analysis over extra architectures.
