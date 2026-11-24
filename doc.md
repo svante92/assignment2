@@ -16,8 +16,9 @@ We investigate whether incorporating historical playtime improves personalized g
 
 - Source: [Steam data, Version 1 — User and Item Data](https://cseweb.ucsd.edu/~jmcauley/datasets.html#steam_data).
 - Required fields: `user_id`, `item_id`, `playtime_forever` (minutes; convert to hours).
-- Flatten nested item lists, remove duplicate user-game pairs, validate nonnegative playtime, and retain zero-playtime ownership interactions.
-- Iteratively filter users with fewer than 10 games and games with fewer than 5 users. Report counts before and after filtering.
+- Flatten nested item lists, remove duplicate user-game pairs (keeping the larger playtime), validate nonnegative playtime, and retain zero-playtime ownership interactions.
+- Remove entries that are not standalone games (test/beta builds Steam grants alongside a game, dedicated servers, SDKs and editors, soundtracks, demos) by name only, with an explicit exceptions list for real games whose names match. This removed 76 entries (3.1% of interactions), including *Dota 2 Test*, the most-owned entry in the raw data.
+- Iteratively filter users with fewer than 10 games and games with fewer than 5 users. Report counts before and after filtering. Result: 56,457 users, 9,130 games, 4,876,826 interactions.
 - Use a seeded per-user random 80/10/10 train/validation/test split, ensuring at least one interaction in each partition. Only train-supported items are eligible for evaluation; report excluded held-out interactions and users.
 - Fit all model statistics and playtime transformations using training data only. Use validation for hyperparameter selection; keep test data untouched until final evaluation.
 - If full-data training is too expensive, use a fixed seeded user subset, report the sampling procedure, and use identical splits for every model.
@@ -40,7 +41,7 @@ For games $i$ and $j$, let $U_i$ and $U_j$ be their training users:
 
 $$J(i,j)=\frac{|U_i\cap U_j|}{|U_i\cup U_j|}.$$
 
-Score an unseen candidate by summing its similarities to games in the user's training history. Use sparse matrices and optionally retain the top 100 neighbors per item for efficiency; document the setting.
+Score an unseen candidate by summing its similarities to games in the user's training history. Compute similarities blockwise with sparse matrices. The number of neighbors kept per item was chosen on validation NDCG@10 from {25, 100, 400, all}; keeping all neighbors was best (NDCG@10 0.237 vs 0.203 for top 100) and fits in memory as a dense 9,130 × 9,130 matrix (~330 MB). Top-k ties are broken by lower item ID.
 
 ### 3.3 Standard BPR
 
@@ -66,7 +67,7 @@ Normalize weights to have mean 1 under the training triplet sampling distributio
 
 ## 4. Training and evaluation protocol
 
-- Suggested starting configuration: 64-dimensional embeddings, Adam, learning rate 0.001, batch size 4096, up to 30 epochs, early stopping on validation NDCG@10. Tune a small shared configuration if needed.
+- Suggested starting configuration: 64-dimensional embeddings, Adam, learning rate 0.001, batch size 4096, up to 30 epochs, early stopping on validation NDCG@10. Tune a small shared configuration if needed. Per-epoch checkpoint selection computes NDCG@10 on all validation users, with the same masking and tie-breaking as the shared evaluator.
 - Sample one or more negatives per positive using the same policy for every BPR variant.
 - Rank all train-supported games in batches. For validation, mask training games; for test, mask training and validation games. Do not retrain on validation unless the protocol is explicitly changed for all models.
 - Compute macro-averaged Recall@10, Recall@20, NDCG@10, and AUC over eligible users. Treat held-out ownership as relevance; unobserved candidates are not confirmed negatives.
