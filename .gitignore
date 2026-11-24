@@ -10,7 +10,7 @@ venv/
 
 # Data (large files)
 data/
-*.json.gz
+.json.gz
 *.csv.gz
 
 # macOS
