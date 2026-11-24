@@ -112,13 +112,15 @@ Optional, only after core experiments: catalog coverage, popularity bias, or pai
 
 ### Integration contract
 
-Svante owns preprocessing and evaluation; Tony owns the trainable recommendation models. Agree on this interface before implementing independently:
+Svante owns preprocessing and evaluation; Tony owns the trainable recommendation models. All code lives in Jupyter notebooks; there are no separate Python modules. Agree on this interface before implementing independently:
 
-- `train.parquet`, `val.parquet`, `test.parquet`: integer `user_id`, integer `item_id`, float `playtime_hours`; use shared contiguous ID mappings and persist metadata (`num_users`, `num_items`, seed).
+- `train.parquet`, `val.parquet`, `test.parquet`: integer `user_id`, integer `item_id`, float `playtime_hours`; use shared contiguous ID mappings and persist metadata (`num_users`, `num_items`, seed). Saving the split lets BPR cells load data without rerunning preprocessing.
 - Baselines and BPR expose `score_users(user_ids)` returning scores in shared item-ID order, in batches as needed.
 - Evaluation handles masking, eligibility, ranking metrics, and activity groups centrally.
 - Save results as CSV or JSON with model, seed, split, metrics, and configuration. Do not commit raw datasets or large checkpoints.
-- Each member develops on a separate branch; review and merge the data/evaluation interface early. Both review the final results and ensure the notebook matches the code.
+- Both members work in the single shared `workbook.ipynb`, ordered by the five graded sections. Each owns their own sections and does not edit the other's cells.
+- Git cannot merge notebooks reliably, so avoid conflicts: pull before starting, commit and push small changes often, and tell each other before editing. Clear outputs before committing (or use `nbstripout`) to keep diffs small; run the notebook fully only for the final export.
+- Peer graders only see the exported `workbook.html`, so every piece of code shown in the presentation must appear in it. Both review the final results and confirm the notebook runs top to bottom.
 
 ## 7. Repository structure
 
@@ -129,19 +131,13 @@ Svante owns preprocessing and evaluation; Tony owns the trainable recommendation
 ├── requirements.txt
 ├── .gitignore
 ├── data/                  # ignored raw/processed datasets
-├── src/
-│   ├── preprocess.py      # Svante
-│   ├── eda.py             # Svante
-│   ├── baselines.py       # Svante
-│   ├── evaluate.py        # Svante
-│   ├── bpr.py             # Tony
-│   └── train.py           # Tony
-├── main.py
-├── configs/
-├── results/
+├── results/               # metric CSV/JSON files
 ├── figures/
-└── workbook.ipynb
+├── workbook.ipynb         # the single shared notebook (submitted as workbook.html)
+└── workbook.html
 ```
+
+The final `workbook.ipynb` follows the graded sections: (1) predictive task, (2) data and EDA, (3) models, (4) evaluation and results, (5) related work and limitations.
 
 Recommended stack: Python, NumPy, Pandas, SciPy, PyTorch, Matplotlib, PyArrow, Jupyter. Pin dependencies after verifying the environment.
 
