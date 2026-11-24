@@ -13,7 +13,7 @@ python -m ipykernel install --user --name steam-bpr
 jupyter notebook workbook.ipynb
 ```
 
-Select the `steam-bpr` kernel in Jupyter. The notebook downloads the raw dataset (~74 MB) into `data/` on first run. `data/` is git-ignored.
+Select the `steam-bpr` kernel in Jupyter. The raw dataset `australian_users_items.json.gz` (~74 MB) is committed at the repo root; the notebook downloads it only if it is missing. Processed files go in `data/`, which is git-ignored.
 
 ## Working in the shared notebook
 

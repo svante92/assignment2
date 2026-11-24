@@ -117,7 +117,7 @@ Svante owns preprocessing and evaluation; Tony owns the trainable recommendation
 - `train.parquet`, `val.parquet`, `test.parquet`: integer `user_id`, integer `item_id`, float `playtime_hours`; use shared contiguous ID mappings and persist metadata (`num_users`, `num_items`, seed). Saving the split lets BPR cells load data without rerunning preprocessing.
 - Baselines and BPR expose `score_users(user_ids)` returning scores in shared item-ID order, in batches as needed.
 - Evaluation handles masking, eligibility, ranking metrics, and activity groups centrally.
-- Save results as CSV or JSON with model, seed, split, metrics, and configuration. Do not commit raw datasets or large checkpoints.
+- Save results as CSV or JSON with model, seed, split, metrics, and configuration. The raw `australian_users_items.json.gz` is committed at the repo root; do not commit processed data or model checkpoints.
 - Both members work in the single shared `workbook.ipynb`, ordered by the five graded sections. Each owns their own sections and does not edit the other's cells.
 - Git cannot merge notebooks reliably, so avoid conflicts: pull before starting, commit and push small changes often, and tell each other before editing. Clear outputs before committing (or use `nbstripout`) to keep diffs small; run the notebook fully only for the final export.
 - Peer graders only see the exported `workbook.html`, so every piece of code shown in the presentation must appear in it. Both review the final results and confirm the notebook runs top to bottom.
@@ -130,7 +130,8 @@ Svante owns preprocessing and evaluation; Tony owns the trainable recommendation
 ├── README.md
 ├── requirements.txt
 ├── .gitignore
-├── data/                  # ignored raw/processed datasets
+├── australian_users_items.json.gz  # raw dataset (committed)
+├── data/                  # ignored processed data (split parquet files, meta.json)
 ├── results/               # metric CSV/JSON files
 ├── figures/
 ├── workbook.ipynb         # the single shared notebook (submitted as workbook.html)
