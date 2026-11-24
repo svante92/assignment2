@@ -29,7 +29,8 @@ All code lives in `workbook.ipynb`, organized by the five graded sections. Secti
 - `data/train.parquet`, `data/val.parquet`, `data/test.parquet`: `user_id` (int), `item_id` (int), `playtime_hours` (float), with contiguous IDs.
 - `data/meta.json`: `num_users`, `num_items`, `seed`, ID mappings.
 - Every model has `score_users(user_ids)` returning a `(len(user_ids), num_items)` NumPy array of scores.
-- `evaluate(model, eval_df, mask_dfs, num_items)` in Section 1.1 handles masking, ranking and metrics for all models.
+- `evaluate(model, eval_df, mask_dfs, num_users, num_items)` in Section 1.1 handles masking, ranking and metrics for all models. Pass `mask_dfs=[train_df]` for validation and `[train_df, val_df]` for test. It returns a dict with `recall@10`, `recall@20`, `ndcg@10`, `auc` and `n_users`.
+- For per-epoch early stopping, evaluate a fixed user subset: `evaluate(model, val_df, [train_df], num_users, num_items, user_ids=sample_eval_users(val_df, 5000))`.
 
 ## Submission
 
